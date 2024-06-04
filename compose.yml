@@ -1,0 +1,112 @@
+version: "3.9"
+
+networks:
+    proxy-network: {}
+    internal-network: {}
+
+volumes:
+  minio_data:
+
+services:
+    app:
+        build:
+            context: ./image
+            dockerfile: php-fpm.Dockerfile
+        volumes:
+            - ./src:/var/www/html
+        depends_on:
+            - mariadb
+        networks:
+            - proxy-network
+            - internal-network
+    nginx:
+        build:
+            dockerfile: nginx.Dockerfile
+            context: ./image
+        ports:
+            - "80:80"
+        volumes:
+            - ./config/nginx/conf.d:/etc/nginx/conf.d
+            - ./src:/var/www/html
+        depends_on:
+            - app
+            - mariadb
+        networks:
+          - proxy-network
+   
+    mariadb:
+        build:
+            context: ./image
+            dockerfile: mariadb.Dockerfile
+        command: --sql_mode="" --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+        restart: always
+        environment:
+            MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+            # MYSQL_DATABASE: ${MYSQL_DATABASE}
+            MYSQL_USER: ${MYSQL_USER}
+            MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+            MYSQL_ALLOW_EMPTY_PASSWORD: "TRUE"
+        ports:
+            - "3306:3306"
+        volumes:
+            - ./data/mariadb:/var/lib/mysql
+        networks:
+            - internal-network
+    
+    phpmyadmin:
+      image: phpmyadmin/phpmyadmin
+      links:
+        - "mariadb"
+      environment:
+        MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+        HIDE_PHP_VERSION: 1
+        PMA_ARBITRARY: 1
+        PMA_HOST: "mariadb"
+        PMA_USER: "root"
+        PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      ports:
+        - "8081:80"
+      depends_on:
+        - mariadb
+      networks:
+        - internal-network
+    
+    mailpit:
+      image: 'axllent/mailpit:latest'
+      restart: unless-stopped
+      ports:
+        - '${FORWARD_MAILPIT_PORT:-1025}:1025'
+        - '${FORWARD_MAILPIT_UI_PORT:-8025}:8025'
+      networks:
+        - internal-network
+
+    node:
+        build:
+            context: ./image
+            dockerfile: nodejs.Dockerfile
+        volumes:
+            - ./src:/var/www/html
+        ports:
+            - "3000:3000"
+        networks:
+            - internal-network
+
+    minio:
+        image: minio/minio
+        command: 'server --address "0.0.0.0:9000" --console-address "0.0.0.0:9001" /data'
+        ports:
+            - 9000:9000
+            - 9001:9001
+        volumes:
+            - ./data/minio:/data
+        networks:
+          - proxy-network
+          - internal-network
+
+    minio-setup:
+      build: ./image/minio-client-setup
+      depends_on:
+        - minio
+      networks:
+        - proxy-network
+        - internal-network
